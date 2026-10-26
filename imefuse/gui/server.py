@@ -211,12 +211,6 @@ class Handler(BaseHTTPRequestHandler):
                     ctype = "image/png"
                 with open(full, "rb") as fh:
                     return self._send(200, fh.read(), ctype + "; charset=utf-8")
-            if path.startswith("/shots/"):
-                full = os.path.join(paths.runs_dir(), "shots", os.path.basename(path))
-                if not os.path.exists(full):
-                    return self._send(404, "not found", "text/plain")
-                with open(full, "rb") as fh:
-                    return self._send(200, fh.read(), "image/png")
             if path == "/api/status":
                 return self._json({"imes": discover.probe_all(),
                                    "usable": discover.usable(),
