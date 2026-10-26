@@ -23,3 +23,6 @@ tools/imselect
 
 # macOS
 .DS_Store
+
+# 推广稿，不进仓库
+post-*.md
