@@ -225,7 +225,7 @@ python3 -c "import sys;sys.path.insert(0,'.');from imefuse.adapters import sogou
   {'w': 'diao', 'py': 'd i a o', 'n': 787, 't': 0, 'raw': 787, 'kind': 'user', 'src': 'sogou'},
   {'w': 'history', 'py': 'h i s t o r y', 'n': 787, 't': 0, 'raw': 787, 'kind': 'user', 'src': 'sogou'},
   {'w': 'Vu额', 'py': 'v u e', 'n': 787, 't': 0, 'raw': 787, 'kind': 'user', 'src': 'sogou'}],
- {'file': '/Users/zsq/Library/Application Support/Sogou/InputMethod/SogouPY.users/00000001/sgim_gd_usr.bin',
+ {'file': '~/Library/Application Support/Sogou/InputMethod/SogouPY.users/00000001/sgim_gd_usr.bin',
   'records': 33459, 'header_count': 33460, 'index_slots': 40000, 'index_free': 6540,
   'arena_used': 1081934, 'arena_size': 1390000, 'arena_free': 308066,
   'gens': 792, 'max_gen': 797, 'gen_sum': 9667370, 'format_version': '20160521',
