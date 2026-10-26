@@ -1,6 +1,8 @@
 """Local web GUI for imefuse.  Pure stdlib: ThreadingHTTPServer + static files."""
 import json
 import os
+import re
+import time
 import subprocess
 import sys
 import threading
@@ -159,6 +161,49 @@ def do_apply(ime, filename, strategy="P1", alpha=0.5, force_unsafe=False):
     return apply_records(ime, incoming_list, header, strategy, alpha, force_unsafe)
 
 
+SAFE_NAME = re.compile(r"[^\w.-]+", re.UNICODE)  # keep CJK, drop path junk
+
+
+def download_path(name):
+    path = os.path.join(EXPORT_DIR, os.path.basename(name))
+    if not os.path.isfile(path):
+        raise FileNotFoundError(name)
+    return path
+
+
+def save_upload(filename, data):
+    """Store a file the user brought from another machine."""
+    name = os.path.basename(filename or "upload.jsonl")
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in (".jsonl", ".json", ".tsv"):
+        raise ValueError("只支持 .jsonl / .json / .tsv")
+    if not data:
+        raise ValueError("文件是空的")
+    os.makedirs(EXPORT_DIR, exist_ok=True)
+    stem = SAFE_NAME.sub("-", os.path.splitext(name)[0])[:60] or "upload"
+    dest = os.path.join(EXPORT_DIR, "upload-%s-%s%s"
+                        % (time.strftime("%Y%m%d-%H%M%S"), stem, ext))
+    with open(dest, "wb") as fh:
+        fh.write(data)
+    try:
+        if ext == ".tsv":
+            _header, recs = canonical.read_tsv(dest)
+        else:
+            _header, recs = canonical.read_jsonl(dest)
+    except Exception as exc:  # noqa: BLE001
+        os.unlink(dest)
+        raise ValueError("文件解析失败：%s" % exc)
+    if not recs:
+        os.unlink(dest)
+        raise ValueError("文件里没有可导入的词条")
+    bad = [r for r in recs if not r.get("w")]
+    if bad:
+        os.unlink(dest)
+        raise ValueError("有 %d 条记录缺少词面，可能不是 imefuse 导出文件" % len(bad))
+    return {"file": os.path.basename(dest), "count": len(recs),
+            "source": (_header or {}).get("source", "upload")}
+
+
 class Server(ThreadingHTTPServer):
     """Threading server that ignores clients hanging up mid-response."""
 
@@ -211,6 +256,18 @@ class Handler(BaseHTTPRequestHandler):
                     ctype = "image/png"
                 with open(full, "rb") as fh:
                     return self._send(200, fh.read(), ctype + "; charset=utf-8")
+            if path.startswith("/api/download/"):
+                name = path[len("/api/download/"):]
+                full = download_path(name)
+                with open(full, "rb") as fh:
+                    data = fh.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Disposition",
+                                 'attachment; filename="%s"' % os.path.basename(full))
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                return self.wfile.write(data)
             if path == "/api/status":
                 return self._json({"imes": discover.probe_all(),
                                    "usable": discover.usable(),
@@ -225,6 +282,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         try:
+            if path == "/api/upload":
+                # raw bytes: do NOT go through the JSON body reader first
+                n = int(self.headers.get("Content-Length") or 0)
+                if n <= 0:
+                    raise ValueError("没有收到文件内容")
+                if n > 32 * 1024 * 1024:
+                    raise ValueError("文件太大（上限 32 MB）")
+                raw_name = self.headers.get("X-Filename") or "upload.jsonl"
+                from urllib.parse import unquote
+                return self._json(save_upload(unquote(raw_name), self.rfile.read(n)))
             body = self._body()
             if path == "/api/export":
                 return self._json(do_export(body["ime"]))

@@ -29,6 +29,12 @@
     <h2>② 合并导入</h2>
     <p class="hint">选目标输入法和一份导出文件，先看 diff（新增 / 累加 / 同词异音），确认后才会写入。写入前自动备份、自动退出输入法、写完自动重启。</p>
     <div class="row">
+      <button id="btnPick">选择文件…</button>
+      <input type="file" id="fileInput" accept=".jsonl,.json,.tsv" hidden>
+      <span class="msg" id="uploadMsg">从别的 Mac 拷过来的 .jsonl / .tsv 也可以直接传上来</span>
+    </div>
+    <div id="dropZone" class="dropzone">把文件拖到这里</div>
+    <div class="row">
       <select id="targetIme"></select>
       <select id="fileList"></select>
       <select id="strategy">

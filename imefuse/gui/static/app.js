@@ -130,8 +130,15 @@ function renderExportPreview(data) {
   const box = $("#exportPreview");
   box.innerHTML = "";
   if (!data) return;
-  const p = el("p", { class: "msg" },
-    `已导出 ${data.count} 条 → ${data.file}（TSV: ${data.tsv}）`);
+  const p = el("p", { class: "msg" });
+  p.appendChild(document.createTextNode(`已导出 ${data.count} 条 → ${data.file}`));
+  [["下载 .jsonl", data.file], ["下载 .tsv", data.tsv]].forEach(([label, name]) => {
+    if (!name) return;
+    const a = el("a", { href: "/api/download/" + encodeURIComponent(name), class: "dl" });
+    const btn = el("button", {}, label);
+    a.appendChild(btn);
+    p.appendChild(a);
+  });
   box.appendChild(p);
   const t = el("table");
   t.innerHTML = "<thead><tr><th>词</th><th>拼音</th><th>词频</th></tr></thead>";
@@ -336,3 +343,45 @@ $("#btnMigrateApply").onclick = async () => {
     $("#btnMigrateApply").textContent = "确认迁移";
   }
 };
+
+// ---- upload a file from anywhere -----------------------------------------
+async function uploadFile(file) {
+  if (!file) return;
+  const msg = $("#uploadMsg");
+  msg.textContent = "上传 " + file.name + " …";
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "X-Filename": encodeURIComponent(file.name) },
+      body: file,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    msg.textContent = `已载入 ${data.count} 条（${data.source}）`;
+    await refresh();
+    const sel = $("#fileList");
+    if ([...sel.options].some((o) => o.value === data.file)) {
+      sel.value = data.file;
+    }
+  } catch (e) {
+    msg.innerHTML = '<span class="err">上传失败：' + e.message + "</span>";
+  }
+}
+
+$("#btnPick").onclick = () => $("#fileInput").click();
+$("#fileInput").onchange = (ev) => {
+  uploadFile(ev.target.files[0]);
+  ev.target.value = "";
+};
+
+const dz = $("#dropZone");
+["dragenter", "dragover"].forEach((t) => dz.addEventListener(t, (ev) => {
+  ev.preventDefault(); dz.classList.add("hot");
+}));
+["dragleave", "drop"].forEach((t) => dz.addEventListener(t, (ev) => {
+  ev.preventDefault(); dz.classList.remove("hot");
+}));
+dz.addEventListener("drop", (ev) => {
+  const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (f) uploadFile(f);
+});

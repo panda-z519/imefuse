@@ -51,6 +51,13 @@ imefuse status                      # machine-readable summary
 
 In the GUI: pick a source and a target, hit **预览** to see the diff (new / bumped / same word different pinyin / untouched), then **确认迁移**.
 
+### Moving data between machines
+
+- **导出** produces `exports/<ime>-<ts>.jsonl` (plus a `.tsv` mirror); the GUI gives you a download button for each.
+- **合并导入** accepts a file from disk — click 选择文件 or drag a `.jsonl` / `.tsv` onto the drop zone. Uploads are validated before they are accepted: unknown extensions, empty files and rows without a word are rejected with a message.
+
+So the cross-machine flow is: export on Mac A → carry the `.jsonl` over → upload it on Mac B → preview the diff → apply.
+
 ## Safety model
 
 Every write follows the same sequence, and none of it is optional:

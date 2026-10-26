@@ -71,3 +71,28 @@ def dedupe(records):
         if k not in out or r.get("n", 0) > out[k].get("n", 0):
             out[k] = r
     return list(out.values())
+
+
+def read_tsv(path):
+    """Read the flat TSV mirror back into canonical records."""
+    records = []
+    with open(path, "r", encoding="utf-8") as fh:
+        header = fh.readline().rstrip("\n").split("\t")
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            parts = line.split("\t")
+            row = dict(zip(header, parts))
+            try:
+                n = int(row.get("count") or 1)
+            except ValueError:
+                n = 1
+            try:
+                t = int(row.get("last_used") or 0)
+            except ValueError:
+                t = 0
+            records.append({"w": row.get("word", ""), "py": row.get("pinyin", ""),
+                            "n": n, "t": t, "raw": n,
+                            "kind": "user", "src": row.get("source", "tsv")})
+    return None, records
