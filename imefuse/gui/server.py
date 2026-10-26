@@ -1,6 +1,7 @@
 """Local web GUI for imefuse.  Pure stdlib: ThreadingHTTPServer + static files."""
 import json
 import os
+import subprocess
 import sys
 import threading
 import webbrowser
@@ -158,6 +159,18 @@ def do_apply(ime, filename, strategy="P1", alpha=0.5, force_unsafe=False):
     return apply_records(ime, incoming_list, header, strategy, alpha, force_unsafe)
 
 
+class Server(ThreadingHTTPServer):
+    """Threading server that ignores clients hanging up mid-response."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "imefuse/1.0"
 
@@ -255,6 +268,21 @@ def _serving(port, timeout=0.6):
         return False
 
 
+def _open_browser(url):
+    """Opening from a GUI-launched process is unreliable -- use /usr/bin/open."""
+    if os.environ.get("IMEFUSE_NO_BROWSER"):
+        return True
+    try:
+        if subprocess.run(["/usr/bin/open", url], check=False).returncode == 0:
+            return True
+    except OSError:
+        pass
+    try:
+        return webbrowser.open(url)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def main(port=8770, tries=20):
     # Double-clicking the app twice should focus the running window, not die
     # with "address already in use".
@@ -262,13 +290,13 @@ def main(port=8770, tries=20):
         if _serving(candidate):
             url = "http://127.0.0.1:%d/" % candidate
             print("imefuse 已在运行 -> %s" % url)
-            webbrowser.open(url)
+            _open_browser(url)
             return 0
 
     httpd = None
     for candidate in range(port, port + tries):
         try:
-            httpd = ThreadingHTTPServer(("127.0.0.1", candidate), Handler)
+            httpd = Server(("127.0.0.1", candidate), Handler)
             port = candidate
             break
         except OSError:
@@ -278,7 +306,7 @@ def main(port=8770, tries=20):
 
     url = "http://127.0.0.1:%d/" % port
     print("imefuse GUI -> %s" % url)
-    threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    threading.Timer(0.6, lambda: _open_browser(url)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

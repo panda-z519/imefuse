@@ -1,11 +1,12 @@
 #!/bin/bash
-# Build a double-clickable macOS app bundle around the Python package.
+# Build a double-clickable macOS app bundle.
 #
-#   tools/build_app.sh            -> build/imefuse.app  (uses system python3)
+#   tools/build_app.sh            -> build/imefuse.app
 #
-# The bundle is intentionally thin: it ships the pure-python package plus a
-# launcher, and runs it with whatever python3 the machine already has.  No
-# PyInstaller, no network, no code signing required to run locally.
+# Preferred: compile tools/AppMain.swift into a real Cocoa app that starts the
+# Python server as a child process and shows the UI in a WKWebView window.
+# Fallback (no swiftc): ship a shell launcher that starts the server and opens
+# the system browser.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -28,21 +29,17 @@ find "${APP}/Contents/Resources/imefuse" -name '__pycache__' -type d -prune -exe
 
 # --- icon ------------------------------------------------------------------
 ICNS="${ROOT}/tools/AppIcon.icns"
-if [ ! -f "${ICNS}" ]; then
+if [ ! -f "${ICNS}" ] && command -v swiftc >/dev/null 2>&1; then
   echo "==> generating icon (one-off)"
   TMPI="$(mktemp -d)"
   if swiftc -O "${ROOT}/tools/make_icon.swift" -o "${TMPI}/make_icon" 2>/dev/null \
      && "${TMPI}/make_icon" "${TMPI}/AppIcon.iconset" >/dev/null \
      && iconutil -c icns "${TMPI}/AppIcon.iconset" -o "${TMPI}/AppIcon.icns"; then
     cp "${TMPI}/AppIcon.icns" "${ICNS}"
-  else
-    echo "    (icon generation skipped -- swiftc/iconutil unavailable)"
   fi
   rm -rf "${TMPI}"
 fi
-if [ -f "${ICNS}" ]; then
-  cp "${ICNS}" "${APP}/Contents/Resources/AppIcon.icns"
-fi
+[ -f "${ICNS}" ] && cp "${ICNS}" "${APP}/Contents/Resources/AppIcon.icns"
 
 # --- Info.plist ------------------------------------------------------------
 cat > "${APP}/Contents/Info.plist" <<PLIST
@@ -65,37 +62,76 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# --- launcher --------------------------------------------------------------
+# --- executable: native shell if we can, bash launcher otherwise -----------
+MODE="shell"
+if command -v swiftc >/dev/null 2>&1; then
+  echo "==> compiling native app shell"
+  # the toolchain defaults minos to the host OS, which makes the bundle
+  # unlaunchable on anything older -- pin it explicitly
+  ARCH="$(uname -m)"
+  if swiftc -O -target "${ARCH}-apple-macosx11.0" \
+       -o "${APP}/Contents/MacOS/imefuse" "${ROOT}/tools/AppMain.swift" 2>/tmp/imefuse-swift.log; then
+    MODE="native"
+  else
+    echo "    swiftc failed, falling back to the browser launcher:"
+    sed -n '1,5p' /tmp/imefuse-swift.log | sed 's/^/      /'
+  fi
+fi
+
+if [ "${MODE}" = "shell" ]; then
 cat > "${APP}/Contents/MacOS/imefuse" <<'LAUNCH'
 #!/bin/bash
-# imefuse launcher: locate a python3, then start the local GUI.
-set -euo pipefail
+# Fallback launcher: start the server, wait for it, open the system browser.
+set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 export PYTHONPATH="${HERE}/Resources${PYTHONPATH:+:${PYTHONPATH}}"
 export PYTHONDONTWRITEBYTECODE=1
+export IMEFUSE_NO_BROWSER=1
+DATA="${HOME}/Library/Application Support/imefuse"
+mkdir -p "${DATA}"
+LOG="${DATA}/app.log"
 
 PY=""
-for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 "$(command -v python3 || true)"; do
+for cand in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 "$(command -v python3 2>/dev/null || true)"; do
   if [ -n "${cand}" ] && [ -x "${cand}" ]; then PY="${cand}"; break; fi
 done
-
 if [ -z "${PY}" ]; then
-  osascript -e 'display alert "imefuse" message "没找到 python3。请先安装 Command Line Tools：xcode-select --install" as critical' >/dev/null 2>&1 || true
+  osascript -e 'display alert "imefuse" message "没找到 python3。请先安装 Command Line Tools：\n\nxcode-select --install" as critical' >/dev/null 2>&1 || true
   exit 1
 fi
 
-"${PY}" -m imefuse.cli gui "$@"
-status=$?
-if [ ${status} -ne 0 ]; then
-  osascript -e 'display alert "imefuse" message "启动失败（退出码 '"${status}"'）。\n可在终端运行以下命令看详细报错：\n\npython3 -m imefuse.cli gui" as critical' >/dev/null 2>&1 || true
+echo "=== $(date) starting imefuse with ${PY}" >>"${LOG}"
+"${PY}" -m imefuse.cli gui "$@" >>"${LOG}" 2>&1 &
+SERVER_PID=$!
+
+URL=""
+for _ in $(seq 1 60); do
+  for p in $(seq 8770 8789); do
+    if /usr/bin/curl -s -m 0.4 -o /dev/null "http://127.0.0.1:${p}/api/status" 2>/dev/null; then
+      URL="http://127.0.0.1:${p}/"
+      break 2
+    fi
+  done
+  sleep 0.25
+done
+
+if [ -z "${URL}" ]; then
+  osascript -e 'display alert "imefuse 启动失败" message "服务没有起来，日志在 ~/Library/Application Support/imefuse/app.log" as critical' >/dev/null 2>&1 || true
+  kill "${SERVER_PID}" 2>/dev/null
+  exit 1
 fi
-exit ${status}
+
+echo "serving ${URL}" >>"${LOG}"
+/usr/bin/open "${URL}" 2>>"${LOG}" || true
+wait "${SERVER_PID}"
 LAUNCH
 chmod +x "${APP}/Contents/MacOS/imefuse"
+fi
 
-# --- ad-hoc sign so Gatekeeper is less grumpy on the local machine ---------
-codesign --force --deep --sign - "${APP}" >/dev/null 2>&1 || \
-  echo "    (ad-hoc codesign skipped)"
+# --- sign + verify ---------------------------------------------------------
+codesign --force --deep --sign - "${APP}" >/dev/null 2>&1 || echo "!! ad-hoc codesign failed" >&2
+test -x "${APP}/Contents/MacOS/imefuse" || { echo "!! launcher is not executable" >&2; exit 1; }
+codesign -v "${APP}" >/dev/null 2>&1 || { echo "!! bundle is not signed" >&2; exit 1; }
 
-echo "==> done: ${APP}"
+echo "==> done: ${APP}  (${MODE})"
 echo "    open ${APP}"
