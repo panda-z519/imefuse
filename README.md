@@ -4,10 +4,13 @@
 
 # imefuse
 
-**Your words should follow you, not your input method.**
+**你的词，应该跟着你走，而不是跟着输入法。**
 
-Move the personal word-frequency data out of WeType / Sogou / Doubao on macOS —
-and merge it into another IME without ever losing a word.
+把 macOS 上微信键盘 / 搜狗 / 豆包里的个人词频拿出来，
+合并进另一个输入法——一个词都不丢。
+
+*Your words should follow you, not your input method.
+Move the personal word-frequency data out of WeType / Sogou / Doubao on macOS and merge it into another IME without ever losing a word.*
 
 ![Platform](https://img.shields.io/badge/platform-macOS-black)
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
@@ -15,115 +18,9 @@ and merge it into another IME without ever losing a word.
 ![Tests](https://img.shields.io/badge/tests-46%20passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-[English](#english) · [中文](#中文)
+[中文](#中文) · [English](#english)
 
 </div>
-
----
-
-# English
-
-## Why this exists
-
-Every Chinese input method on macOS quietly keeps a private record of the words **you** use — how often, in what context, which candidate you picked over the one next to it. Stack up a few years of that and it becomes a personal language model: your slang, your colleagues' names, the typos you keep making and the phrases you always fix.
-
-Then you switch IMEs, and it's gone. The formats are undocumented, mutually incompatible, and no vendor offers an import path. A decade of muscle memory resets to factory defaults because the data is locked in a file nobody is supposed to read.
-
-**This project exists because that data is yours.**
-
-We reversed the three formats byte by byte — the LevelDB with its `+6` byte shift, the `SGPU` container with its hidden content checksum, the encrypted UTF-16 records — and instead of keeping the notes to ourselves, we are publishing the parsers, the writers, the merge semantics and the tool.
-
-If the vendors eventually ship a real import/export, this project becomes obsolete. That would be a good outcome. Until then, at least the data can move.
-
-## What it does
-
-| | WeType 微信键盘 | Sogou 搜狗 | Doubao 豆包 |
-|---|---|---|---|
-| Read the private dictionary | ✅ | ✅ | ✅ |
-| Merge a dictionary back in | ✅ | ✅ | ✅ |
-| Keeps a real hit count | ✅ | ✗ (save generation only) | ✅ |
-| Verified end to end | ✅ | ✅ | ✅ |
-
-"Verified" means: the word was written into the store, the IME was restarted, and typing its pinyin actually committed that word — not merely "the bytes are on disk". The full matrix and the raw evidence live in [docs/verification.md](docs/verification.md).
-
-## Design principles
-
-**Merge, never overwrite.** Importing can add a word, and it can raise a frequency. It can never delete an entry, never lower a count, never rewrite a record it did not have to touch. Re-importing the same file is a no-op.
-
-**Refuse rather than corrupt.** Every adapter carries a format fingerprint. If an IME update changes the bytes, imefuse says *unknown format* and stays out of the way instead of writing garbage into your dictionary.
-
-**Assume the application is running.** Every write stops the IME first, snapshots the whole data directory, writes, restarts, re-reads to confirm, and rolls back automatically on any failure.
-
-**Own your data.** No network, no telemetry, no upload. The dictionary never leaves the machine unless you carry the file out yourself.
-
-## Install
-
-```bash
-git clone https://github.com/<you>/imefuse.git
-cd imefuse
-
-python3 -m imefuse.cli detect     # what is installed here, and can we read it?
-make app && open build/imefuse.app
-```
-
-Requires macOS 11+ and Python 3.9+. **No third-party dependencies** — the GUI is served by the standard library on `127.0.0.1`.
-
-## Usage
-
-```bash
-imefuse detect                      # per-IME status and format fingerprint
-imefuse gui                         # native window (or a browser tab)
-imefuse export wetype               # -> exports/wetype-<ts>.jsonl + .tsv
-imefuse import sogou FILE           # dry run: shows the merge diff
-imefuse import sogou FILE --apply   # write (backup + quit IME + restart)
-```
-
-In the window: pick a source and a target, **预览** the diff, then **确认迁移**.
-
-Moving between two Macs: **导出** gives you a download button, **合并导入** accepts a dropped or chosen `.jsonl` / `.tsv`. Uploads are validated before they are accepted.
-
-## How it works
-
-```
-IME store  ←→  adapter (per IME)  ←→  canonical  ←→  merge engine  ←→  GUI / CLI
-```
-
-| Module | Purpose |
-|---|---|
-| `imefuse/discover.py` | finds installed IMEs, resolves data dirs, validates formats |
-| `imefuse/leveldb/` | pure-python LevelDB (snappy, SSTable, WAL, crc32c) |
-| `imefuse/canonical.py` | portable JSONL/TSV intermediate format |
-| `imefuse/merge.py` | P1–P4 strategies, diff, never-lower guarantee |
-| `imefuse/adapters/` | one adapter per input method |
-| `imefuse/gui/` | stdlib HTTP server + static UI |
-| `tools/AppMain.swift` | native window shell (WKWebView) |
-
-The merge engine rescales counts onto the target's own distribution before combining them — a WeType weight of 300 and a Doubao frequency of 3 are not the same unit, and adding them raw would let one side swamp the other.
-
-Format notes, including the two things that took the longest to crack, are in [docs/formats/](docs/formats/).
-
-## Building
-
-| Command | Result |
-|---|---|
-| `make app` | `build/imefuse.app` — native window, uses the system `python3` |
-| `make dist` | single-file binary via PyInstaller (bundles a runtime) |
-| `make test` | 46 unit tests, no real IME data required |
-| `make detect` | what this machine has |
-
-## Acknowledgements
-
-This project would not exist without **[linux.do](https://linux.do)**.
-
-It started as a throwaway question in that community — *"is there any way to move my Sogou words to WeType?"* — and turned into a shared reverse-engineering effort. The format guesses, the byte-level arguments, the person who insisted the `O_NONCE` field had to be a checksum when everyone else had given up on it, the testers who installed three IMEs on their own machines and typed nonsense into them for an evening: that is where this came from.
-
-Thanks also to the wider reverse-engineering community whose notes on LevelDB, snappy and `crc32c` made the plumbing possible.
-
-If you find this useful, the best thing you can do is file what you learn about a version we have not seen yet.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
 
 ---
 
@@ -230,3 +127,109 @@ imefuse import sogou FILE --apply   # 真写（自动备份 + 退输入法 + 重
 ## 许可证
 
 MIT，见 [LICENSE](LICENSE)。
+
+---
+
+# English
+
+## Why this exists
+
+Every Chinese input method on macOS quietly keeps a private record of the words **you** use — how often, in what context, which candidate you picked over the one next to it. Stack up a few years of that and it becomes a personal language model: your slang, your colleagues' names, the typos you keep making and the phrases you always fix.
+
+Then you switch IMEs, and it's gone. The formats are undocumented, mutually incompatible, and no vendor offers an import path. A decade of muscle memory resets to factory defaults because the data is locked in a file nobody is supposed to read.
+
+**This project exists because that data is yours.**
+
+We reversed the three formats byte by byte — the LevelDB with its `+6` byte shift, the `SGPU` container with its hidden content checksum, the encrypted UTF-16 records — and instead of keeping the notes to ourselves, we are publishing the parsers, the writers, the merge semantics and the tool.
+
+If the vendors eventually ship a real import/export, this project becomes obsolete. That would be a good outcome. Until then, at least the data can move.
+
+## What it does
+
+| | WeType 微信键盘 | Sogou 搜狗 | Doubao 豆包 |
+|---|---|---|---|
+| Read the private dictionary | ✅ | ✅ | ✅ |
+| Merge a dictionary back in | ✅ | ✅ | ✅ |
+| Keeps a real hit count | ✅ | ✗ (save generation only) | ✅ |
+| Verified end to end | ✅ | ✅ | ✅ |
+
+"Verified" means: the word was written into the store, the IME was restarted, and typing its pinyin actually committed that word — not merely "the bytes are on disk". The full matrix and the raw evidence live in [docs/verification.md](docs/verification.md).
+
+## Design principles
+
+**Merge, never overwrite.** Importing can add a word, and it can raise a frequency. It can never delete an entry, never lower a count, never rewrite a record it did not have to touch. Re-importing the same file is a no-op.
+
+**Refuse rather than corrupt.** Every adapter carries a format fingerprint. If an IME update changes the bytes, imefuse says *unknown format* and stays out of the way instead of writing garbage into your dictionary.
+
+**Assume the application is running.** Every write stops the IME first, snapshots the whole data directory, writes, restarts, re-reads to confirm, and rolls back automatically on any failure.
+
+**Own your data.** No network, no telemetry, no upload. The dictionary never leaves the machine unless you carry the file out yourself.
+
+## Install
+
+```bash
+git clone https://github.com/<you>/imefuse.git
+cd imefuse
+
+python3 -m imefuse.cli detect     # what is installed here, and can we read it?
+make app && open build/imefuse.app
+```
+
+Requires macOS 11+ and Python 3.9+. **No third-party dependencies** — the GUI is served by the standard library on `127.0.0.1`.
+
+## Usage
+
+```bash
+imefuse detect                      # per-IME status and format fingerprint
+imefuse gui                         # native window (or a browser tab)
+imefuse export wetype               # -> exports/wetype-<ts>.jsonl + .tsv
+imefuse import sogou FILE           # dry run: shows the merge diff
+imefuse import sogou FILE --apply   # write (backup + quit IME + restart)
+```
+
+In the window: pick a source and a target, **预览** the diff, then **确认迁移**.
+
+Moving between two Macs: **导出** gives you a download button, **合并导入** accepts a dropped or chosen `.jsonl` / `.tsv`. Uploads are validated before they are accepted.
+
+## How it works
+
+```
+IME store  ←→  adapter (per IME)  ←→  canonical  ←→  merge engine  ←→  GUI / CLI
+```
+
+| Module | Purpose |
+|---|---|
+| `imefuse/discover.py` | finds installed IMEs, resolves data dirs, validates formats |
+| `imefuse/leveldb/` | pure-python LevelDB (snappy, SSTable, WAL, crc32c) |
+| `imefuse/canonical.py` | portable JSONL/TSV intermediate format |
+| `imefuse/merge.py` | P1–P4 strategies, diff, never-lower guarantee |
+| `imefuse/adapters/` | one adapter per input method |
+| `imefuse/gui/` | stdlib HTTP server + static UI |
+| `tools/AppMain.swift` | native window shell (WKWebView) |
+
+The merge engine rescales counts onto the target's own distribution before combining them — a WeType weight of 300 and a Doubao frequency of 3 are not the same unit, and adding them raw would let one side swamp the other.
+
+Format notes, including the two things that took the longest to crack, are in [docs/formats/](docs/formats/).
+
+## Building
+
+| Command | Result |
+|---|---|
+| `make app` | `build/imefuse.app` — native window, uses the system `python3` |
+| `make dist` | single-file binary via PyInstaller (bundles a runtime) |
+| `make test` | 46 unit tests, no real IME data required |
+| `make detect` | what this machine has |
+
+## Acknowledgements
+
+This project would not exist without **[linux.do](https://linux.do)**.
+
+It started as a throwaway question in that community — *"is there any way to move my Sogou words to WeType?"* — and turned into a shared reverse-engineering effort. The format guesses, the byte-level arguments, the person who insisted the `O_NONCE` field had to be a checksum when everyone else had given up on it, the testers who installed three IMEs on their own machines and typed nonsense into them for an evening: that is where this came from.
+
+Thanks also to the wider reverse-engineering community whose notes on LevelDB, snappy and `crc32c` made the plumbing possible.
+
+If you find this useful, the best thing you can do is file what you learn about a version we have not seen yet.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
