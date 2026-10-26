@@ -26,6 +26,24 @@ mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources"
 cp -R "${ROOT}/imefuse" "${APP}/Contents/Resources/imefuse"
 find "${APP}/Contents/Resources/imefuse" -name '__pycache__' -type d -prune -exec rm -rf {} +
 
+# --- icon ------------------------------------------------------------------
+ICNS="${ROOT}/tools/AppIcon.icns"
+if [ ! -f "${ICNS}" ]; then
+  echo "==> generating icon (one-off)"
+  TMPI="$(mktemp -d)"
+  if swiftc -O "${ROOT}/tools/make_icon.swift" -o "${TMPI}/make_icon" 2>/dev/null \
+     && "${TMPI}/make_icon" "${TMPI}/AppIcon.iconset" >/dev/null \
+     && iconutil -c icns "${TMPI}/AppIcon.iconset" -o "${TMPI}/AppIcon.icns"; then
+    cp "${TMPI}/AppIcon.icns" "${ICNS}"
+  else
+    echo "    (icon generation skipped -- swiftc/iconutil unavailable)"
+  fi
+  rm -rf "${TMPI}"
+fi
+if [ -f "${ICNS}" ]; then
+  cp "${ICNS}" "${APP}/Contents/Resources/AppIcon.icns"
+fi
+
 # --- Info.plist ------------------------------------------------------------
 cat > "${APP}/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,6 +57,7 @@ cat > "${APP}/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>imefuse</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
@@ -65,7 +84,12 @@ if [ -z "${PY}" ]; then
   exit 1
 fi
 
-exec "${PY}" -m imefuse.cli gui "$@"
+"${PY}" -m imefuse.cli gui "$@"
+status=$?
+if [ ${status} -ne 0 ]; then
+  osascript -e 'display alert "imefuse" message "启动失败（退出码 '"${status}"'）。\n可在终端运行以下命令看详细报错：\n\npython3 -m imefuse.cli gui" as critical' >/dev/null 2>&1 || true
+fi
+exit ${status}
 LAUNCH
 chmod +x "${APP}/Contents/MacOS/imefuse"
 

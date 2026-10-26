@@ -6,11 +6,11 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .. import backup, canonical, discover, merge as merge_mod
+from .. import backup, canonical, discover, merge as merge_mod, paths
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-EXPORT_DIR = os.path.join(ROOT, "exports")
+EXPORT_DIR = paths.exports_dir()
 
 def get_adapter(ime):
     return discover.get_adapter(ime)
@@ -199,7 +199,7 @@ class Handler(BaseHTTPRequestHandler):
                 with open(full, "rb") as fh:
                     return self._send(200, fh.read(), ctype + "; charset=utf-8")
             if path.startswith("/shots/"):
-                full = os.path.join(ROOT, "runs", "shots", os.path.basename(path))
+                full = os.path.join(paths.runs_dir(), "shots", os.path.basename(path))
                 if not os.path.exists(full):
                     return self._send(404, "not found", "text/plain")
                 with open(full, "rb") as fh:
@@ -243,8 +243,39 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"error": str(exc)}, 500)
 
 
-def main(port=8770):
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+def _serving(port, timeout=0.6):
+    """True when an imefuse instance already answers on this port."""
+    import urllib.error
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:%d/api/status" % port,
+                                    timeout=timeout) as resp:
+            return resp.status == 200
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def main(port=8770, tries=20):
+    # Double-clicking the app twice should focus the running window, not die
+    # with "address already in use".
+    for candidate in range(port, port + tries):
+        if _serving(candidate):
+            url = "http://127.0.0.1:%d/" % candidate
+            print("imefuse 已在运行 -> %s" % url)
+            webbrowser.open(url)
+            return 0
+
+    httpd = None
+    for candidate in range(port, port + tries):
+        try:
+            httpd = ThreadingHTTPServer(("127.0.0.1", candidate), Handler)
+            port = candidate
+            break
+        except OSError:
+            continue
+    if httpd is None:
+        raise RuntimeError("no free port in %d..%d" % (port, port + tries - 1))
+
     url = "http://127.0.0.1:%d/" % port
     print("imefuse GUI -> %s" % url)
     threading.Timer(0.6, lambda: webbrowser.open(url)).start()

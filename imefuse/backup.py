@@ -5,10 +5,10 @@ import shutil
 import subprocess
 import time
 
-from . import discover, util
+from . import discover, paths, util
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BACKUP_DIR = os.path.join(ROOT, "backups")
+BACKUP_DIR = paths.backups_dir()
 
 def root_of(ime):
     return discover.data_root(ime)

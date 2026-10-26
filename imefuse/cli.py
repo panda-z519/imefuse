@@ -7,15 +7,15 @@ import sys
 import time
 
 from . import canonical, merge as merge_mod
-from . import discover, util
+from . import discover, paths, util
 from .adapters import doubao, sogou, wetype
 
 __version__ = "0.1.0"
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXPORT_DIR = os.path.join(ROOT, "exports")
-STATE_DIR = os.path.join(ROOT, "state")
-RUNS_DIR = os.path.join(ROOT, "runs")
+EXPORT_DIR = paths.exports_dir()
+STATE_DIR = paths.state_dir()
+RUNS_DIR = paths.runs_dir()
 
 ADAPTERS = {
     "wetype": wetype,
