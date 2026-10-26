@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# imefuse runtime artefacts -- these contain personal word data, never commit
+exports/
+backups/
+runs/
+state/
+work/
+*.pre-imefuse
+*.imefuse-bak
+*.imefuse-tmp
+*.imefuse.tmp
+
+# compiled helper (build with: swiftc -O tools/imselect.swift -o tools/imselect)
+tools/imselect
+
+# macOS
+.DS_Store

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>imefuse · 输入法词频互通</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>imefuse</h1>
+  <p class="sub">三家 macOS 输入法个人词频互通 · 合并导入，永不覆盖</p>
+</header>
+
+<main>
+  <section id="cards" class="cards"></section>
+
+  <section class="panel">
+    <h2>① 导出</h2>
+    <p class="hint">把某个输入法的个人词频导出成 canonical 文件（JSONL + TSV）。只读，不改任何数据。</p>
+    <div class="row">
+      <select id="exportIme"></select>
+      <button id="btnExport">导出</button>
+      <span id="exportMsg" class="msg"></span>
+    </div>
+    <div id="exportPreview"></div>
+  </section>
+
+  <section class="panel">
+    <h2>② 合并导入</h2>
+    <p class="hint">选目标输入法和一份导出文件，先看 diff（新增 / 累加 / 同词异音），确认后才会写入。写入前自动备份、自动退出输入法、写完自动重启。</p>
+    <div class="row">
+      <select id="targetIme"></select>
+      <select id="fileList"></select>
+      <select id="strategy">
+        <option value="P1">P1 证据并集（默认）</option>
+        <option value="P2">P2 直接累加</option>
+        <option value="P3">P3 取大</option>
+        <option value="P4">P4 加权融合</option>
+      </select>
+      <button id="btnDiff">预览 diff</button>
+      <button id="btnApply" class="danger" disabled>确认合并写入</button>
+    </div>
+    <div id="diffSummary" class="summary"></div>
+    <div id="diffTable"></div>
+  </section>
+
+  <section class="panel">
+    <h2>③ 一键迁移</h2>
+    <p class="hint">选源和目标，直接把源的个人词迁移到目标（内部就是「导出 → 合并导入」，同样先看 diff 再落盘）。</p>
+    <div class="row">
+      <select id="migSource"></select>
+      <span class="arrow">→</span>
+      <select id="migTarget"></select>
+      <select id="migStrategy">
+        <option value="P1">P1 证据并集（默认）</option>
+        <option value="P2">P2 直接累加</option>
+        <option value="P3">P3 取大</option>
+        <option value="P4">P4 加权融合</option>
+      </select>
+      <button id="btnMigratePreview">预览</button>
+      <button id="btnMigrateApply" class="danger" disabled>确认迁移</button>
+    </div>
+    <div id="migSummary" class="summary"></div>
+    <div id="migTable"></div>
+  </section>
+
+  <section class="panel">
+    <h2>④ 备份与回滚</h2>
+    <div class="row">
+      <select id="backupIme"></select>
+      <button id="btnBackup">立即备份</button>
+      <span id="backupMsg" class="msg"></span>
+    </div>
+    <div id="backupList"></div>
+  </section>
+
+  <section class="panel">
+    <h2>⑤ 验证证据</h2>
+    <p class="hint">往微信键盘 LevelDB 注入「测试词库」后，打 <code>ceshiciku</code> 上屏结果。</p>
+    <img src="/shots/cand-ceshiciku.png" alt="候选窗口截图" class="shot">
+  </section>
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
