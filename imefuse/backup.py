@@ -1,7 +1,5 @@
 """Snapshot / restore the user-data directory of each IME."""
-import json
 import os
-import shutil
 import subprocess
 import time
 

@@ -190,7 +190,7 @@ def read_db(dbdir):
             if prev is None or seq >= prev[0]:
                 latest[user_key] = (seq, typ, value)
     out = {}
-    for key, (seq, typ, value) in latest.items():
+    for key, (_seq, typ, value) in latest.items():
         if typ == 1:
             out[key] = value
     return out

@@ -166,7 +166,7 @@ def export():
                     "kind": "user", "src": "wetype",
                 }
     index_only = 0
-    for key, raw in kv.items():
+    for key in kv:
         if key.startswith(NS_INDEX):
             p = parse_index(key)
             if p:

@@ -463,7 +463,7 @@ def export(path=None):
     split = 0
     best = {}
     collapsed = 0
-    for off, gen, tag, typ, wbytes, head, trail, _rl in c.records():
+    for _off, gen, tag, typ, wbytes, head, trail, _rl in c.records():
         word = wbytes.decode("utf-16-le", "replace")
         ids = head if len(head) == len(word) else trail
         if head != trail:

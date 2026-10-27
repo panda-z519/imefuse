@@ -1,4 +1,3 @@
-import struct
 import unittest
 
 from imefuse.adapters import doubao

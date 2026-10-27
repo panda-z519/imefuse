@@ -8,12 +8,11 @@ the GUI offers it.
 `IMEFUSE_HOME` / `IMEFUSE_APP_DIRS` exist so the detection path can be tested
 against a simulated Mac (fresh install, never-used IME, unknown version).
 """
-import glob
 import os
 import plistlib
 import subprocess
 
-from . import paths
+from . import limits, paths
 
 IMES = [
     {
@@ -155,11 +154,11 @@ def probe(ime):
     if not out["installed"]:
         out["state"] = "missing"
         out["detail"] = "本机没装这个输入法"
-        return out
+        return _finish(ime, out)
     if not out["data_present"]:
         out["state"] = "no-data"
         out["detail"] = "已安装但还没有用户数据（先打几个字让它生成词库）"
-        return out
+        return _finish(ime, out)
     try:
         mod = get_adapter(ime)
         out["caps"] = dict(getattr(mod, "CAPS", {}))
@@ -181,6 +180,14 @@ def probe(ime):
     except Exception as exc:  # noqa: BLE001
         out["state"] = "error"
         out["detail"] = "%s: %s" % (type(exc).__name__, exc)
+    return _finish(ime, out)
+
+
+def _finish(ime, out):
+    """补上能力分级，所有出口都走这里，避免漏档。"""
+    level, notes = limits.assess(ime, out)
+    out["level"] = level
+    out["limits"] = notes
     return out
 
 
@@ -188,8 +195,15 @@ def probe_all():
     return [probe(m["ime"]) for m in IMES]
 
 
-def usable():
-    return [p["ime"] for p in probe_all() if p["state"] == "ready"]
+def usable(rows=None):
+    """能读能写的输入法：blocked 之外都算。
+
+    `limited` 的（比如豆包的定长容器快满、搜狗没有词频）仍然可选，具体限制
+    由 GUI 和 doctor 逐条展示；`rows` 可以传进已探测好的结果，避免一次请求
+    里把三家词库解析两遍。
+    """
+    rows = probe_all() if rows is None else rows
+    return [r["ime"] for r in rows if r["level"] != limits.BLOCKED]
 
 
 def start_app(ime):
