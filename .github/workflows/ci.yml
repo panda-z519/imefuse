@@ -20,5 +20,13 @@ jobs:
         run: python -W error::ResourceWarning -m unittest discover -s tests -v
       - name: byte-compile
         run: python -m compileall -q imefuse tests
+      - name: entry script parses and reports usage
+        run: |
+          bash -n imefuse.sh
+          ./imefuse.sh --help >/dev/null
+          ./imefuse.sh version
       - name: detection runs on a clean machine
-        run: python -m imefuse.cli detect
+        # 干净 CI 机器上三个输入法都不存在，必须仍然退出 0 并说清楚原因
+        run: |
+          ./imefuse.sh --python "$(command -v python3)" detect
+          ./imefuse.sh --python "$(command -v python3)" doctor || true

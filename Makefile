@@ -1,39 +1,48 @@
-.PHONY: help test lint app dist clean install run detect
+.PHONY: help test lint clean doctor detect status run export
 
 PY ?= python3
 VERSION := $(shell $(PY) -c "import re;print(re.search(r'version\s*=\s*\"([^\"]+)\"', open('pyproject.toml').read()).group(1))")
 
+# 所有动作都走同一个入口脚本：两套实现只会让行为漂移
+SH := ./imefuse.sh
+
 help:
 	@echo "imefuse $(VERSION)"
 	@echo ""
+	@echo "  make doctor   能力分级与已知限制（建议先跑）"
 	@echo "  make detect   检测本机装了哪些输入法"
+	@echo "  make status   完整状态（JSON）"
 	@echo "  make run      启动本地 GUI (127.0.0.1:8770)"
 	@echo "  make test     跑单元测试（不需要真机数据）"
-	@echo "  make app      构建 build/imefuse.app（双击可开）"
-	@echo "  make dist     PyInstaller 单文件版（需 pip install pyinstaller）"
-	@echo "  make install  pip install -e .（安装 imefuse 命令）"
-	@echo "  make clean     清理构建产物"
+	@echo "  make lint     byte-compile + 静态检查"
+	@echo "  make clean    清理构建产物"
+	@echo ""
+	@echo "带选项的调用直接用脚本：$(SH) --help"
+
+doctor:
+	$(SH) doctor -v
 
 detect:
-	$(PY) -m imefuse.cli detect
+	$(SH) detect
+
+status:
+	$(SH) status
 
 run:
-	$(PY) -m imefuse.cli gui
+	$(SH) gui
+
+export:
+	@test -n "$(IME)" || { echo "用法: make export IME=wetype"; exit 2; }
+	$(SH) export $(IME)
 
 test:
 	$(PY) -W error::ResourceWarning -m unittest discover -s tests -v
 
 lint:
 	$(PY) -m compileall -q imefuse tests && echo "compile OK"
-
-app:
-	./tools/build_app.sh
-
-dist:
-	./tools/build_dist.sh
-
-install:
-	$(PY) -m pip install -e .
+	@if command -v ruff >/dev/null 2>&1; then \
+	  ruff check . --select F,E9,B; \
+	else echo "(ruff 未安装，跳过静态检查)"; fi
 
 clean:
 	rm -rf build dist *.egg-info

@@ -18,8 +18,7 @@ work/
 *.imefuse-tmp
 *.imefuse.tmp
 
-# compiled helper (build with: swiftc -O tools/imselect.swift -o tools/imselect)
-tools/imselect
+# 没有编译产物：唯一的入口就是 imefuse.sh
 
 # macOS
 .DS_Store
