@@ -1,7 +1,8 @@
 # Contributing to imefuse
 
 Thanks for helping. The project is deliberately small: pure Python, no
-dependencies, one adapter per input method.
+dependencies, one adapter per input method, and exactly one entry point
+(`imefuse.sh`) so there are not two code paths to keep in sync.
 
 ## Ground rules
 
@@ -38,6 +39,10 @@ root) and add it to `imefuse/cli.py::ADAPTERS`.
 future IME update and a corrupted dictionary. Return `compatible=False` with a
 clear `detail` whenever the bytes do not match what you reversed.
 
+Also add the IME's hard limits to `imefuse/limits.py` — fixed container size,
+missing counter, add-only write path. Those are what `doctor` reports, and they
+are what keeps a "successful" merge from quietly writing nothing.
+
 ## Writing up a format
 
 Put it in `docs/formats/<name>.md` and cover:
@@ -53,8 +58,9 @@ Put it in `docs/formats/<name>.md` and cover:
 ## Tests
 
 ```bash
-make test     # 46 tests, no IME required
-make lint     # byte-compile
+make test     # 98 tests, no IME required
+make lint     # byte-compile + ruff (when installed)
+make doctor   # what this machine can actually do
 ```
 
 Tests must pass on a machine with no input methods installed at all.
