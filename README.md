@@ -79,7 +79,7 @@ cd imefuse
 
 ./imefuse.sh doctor        # 先看这台机器能不能用、每家的硬限制
 ./imefuse.sh detect        # 装了哪些输入法
-./imefuse.sh gui           # 起界面（默认 127.0.0.1:8770）
+./imefuse.sh gui           # 起界面（默认 127.0.0.1:8770，未做可用性验证）
 ```
 
 `doctor` 会明确告诉你哪些是「就绪」、哪些「可用·受限」、哪些「不可用」，以及原因。
@@ -224,7 +224,7 @@ doubao   可用·受限      豆包输入法
 
 `./imefuse.sh --help` 是完整清单；`make doctor / detect / run / test` 是简写。
 
-### GUI
+### GUI（未做真实测试，可用性未验证）
 
 ```bash
 ./imefuse.sh gui
@@ -232,6 +232,14 @@ doubao   可用·受限      豆包输入法
 
 界面里：选源和目标 → **预览** diff → **确认迁移**。耗时操作都有进度条；
 首屏探测三家词库要 5–10 秒（微键 20 万条键值），这段时间也有进度。
+
+> **这个界面的可用性还没有验证过。** 后端（解析、合并、写入、备份）做过行为级
+> 验证，向导和 CLI 也跑过真实迁移；但浏览器这一层没做真实测试 ——
+> `tests/` 里没有 GUI 或 HTTP 接口的用例，也没有前端测试，我只在开发时手点过。
+> 布局、异常提示、上传下载、回滚这些交互都可能有没暴露出来的问题。
+>
+> **想稳妥就用命令行**：`./imefuse.sh`（向导）或单步子命令，它们走的是同一份
+> `imefuse/actions.py`，但路径更短、更容易验证。
 
 > 界面是本地浏览器页面 + 本地 Python 服务，走 `127.0.0.1` 回环，不上外网。
 > 词库不会离开这台机器。
@@ -299,6 +307,12 @@ doubao   可用·受限      豆包输入法
 
 仓库就是交付物：一个 `imefuse.sh` 加纯标准库的 Python，没有编译步骤，
 也没有打包产物。
+
+**测试覆盖到哪里**：适配器（三家格式的解析 / 序列化 / 写回）、合并语义、
+LevelDB、canonical、能力分级、进度、入口脚本的参数契约、向导的决策流程。
+**没有覆盖**：GUI 与 HTTP 接口（`imefuse/gui/` 没有任何用例）、真实浏览器里
+的前端交互、以及各家的行为级验证（那部分靠手工跑，结果在
+[docs/verification.md](docs/verification.md)）。
 
 ## 致谢
 
@@ -389,7 +403,7 @@ cd imefuse
 
 ./imefuse.sh doctor        # can this machine do it, and what are the hard limits
 ./imefuse.sh detect        # which IMEs are installed
-./imefuse.sh gui           # serve the UI on 127.0.0.1:8770
+./imefuse.sh gui           # serve the UI on 127.0.0.1:8770 (usability not verified)
 ```
 
 `doctor` says which IMEs are `ready`, `limited` or `blocked`, and why.
@@ -536,7 +550,7 @@ Global options go **before** the command:
 > treats "EOF on stdin" as "accept the default", because silently writing in an
 > unattended run is the worst possible outcome.
 
-### GUI
+### GUI (untested — usability not verified)
 
 ```bash
 ./imefuse.sh gui
@@ -545,6 +559,17 @@ Global options go **before** the command:
 Pick a source and a target, preview the diff, then confirm. Long operations have progress
 bars; the first screen parses all three dictionaries (5–10 s on a 200k-key WeType store)
 and shows progress while it does.
+
+> **The interface has not been verified.** The backend (parsing, merging, writing,
+> backups) has been behaviourally verified, and the wizard and CLI have run real
+> migrations — but the browser layer has never been properly tested. `tests/` has no
+> cases for the GUI or the HTTP endpoints, and no front-end tests; it has only been
+> clicked through by hand during development. Layout, error messages, upload/download
+> and restore flows may all have problems that never surfaced.
+>
+> **If you want the safer path, use the command line**: `./imefuse.sh` (the wizard) or
+> the single-step subcommands. They call the same `imefuse/actions.py`, but the path is
+> shorter and easier to verify.
 
 > The UI is a local browser page talking to a local Python process over `127.0.0.1`.
 > Nothing goes to the network, and no dictionary leaves this machine.
@@ -608,12 +633,21 @@ Some of these are not bugs, they follow from the on-disk format. `doctor` spells
 
 | Command | Result |
 |---|---|
-| `make doctor` | capability levels + known limits |
 | `make test` | 98 unit tests, no real IME data required |
 | `make lint` | byte-compile + `ruff` (when installed) |
-| `make run` | serve the local UI |
+| `make doctor` / `detect` / `run` | same as the matching `./imefuse.sh` subcommand |
 
-The deliverable is the repository plus `imefuse.sh`: no `.app`, no build step, no notarisation.
+The repository is the deliverable: one `imefuse.sh` plus pure-stdlib Python. No build
+step, no artefact to package.
+
+**What the tests cover**: the adapters (parsing, serialising and writing back all three
+formats), the merge semantics, the LevelDB reader, canonical, capability levels,
+progress, the entry script's argument contract, and the wizard's decision flow.
+**What they do not cover**: the GUI and its HTTP endpoints (there is no test in
+`imefuse/gui/`), front-end behaviour in a real browser, or the per-IME behavioural
+verification — that was done by hand, and the record lives in
+[docs/verification.md](docs/verification.md).
+
 Copy it to any Mac with `python3` 3.9+ and it runs.
 
 ## Acknowledgements
