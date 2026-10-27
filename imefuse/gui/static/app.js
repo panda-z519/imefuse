@@ -18,12 +18,56 @@ async function api(path, body) {
   return data;
 }
 
-const STATE_BADGE = {
-  ready: ["ready", "可用"],
-  missing: ["off", "未安装"],
-  "no-data": ["na", "无词库"],
-  "unknown-format": ["bad", "格式不识别"],
-  error: ["bad", "读取失败"],
+// ---- 进度条：只有拿到真实阶段时才画分段，否则只走不确定进度 ----------
+function makeBar(host, label) {
+  host.innerHTML = "";
+  const wrap = el("div", { class: "prog" });
+  const head = el("div", { class: "prog-head" }, label || "");
+  const track = el("div", { class: "prog-track" });
+  const fill = el("div", { class: "prog-fill" });
+  track.appendChild(fill);
+  const tail = el("div", { class: "prog-msg" }, "");
+  wrap.appendChild(head);
+  wrap.appendChild(track);
+  wrap.appendChild(tail);
+  host.appendChild(wrap);
+  wrap.classList.add("indeterminate");
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const secs = ((Date.now() - started) / 1000).toFixed(1);
+    head.textContent = (label || "") + "  " + secs + "s";
+  }, 100);
+  return {
+    step(done, total, msg) {
+      if (total) {
+        wrap.classList.remove("indeterminate");
+        fill.style.width = Math.round((done / total) * 100) + "%";
+        head.textContent = `[${done}/${total}] ${label || ""}`;
+      }
+      if (msg !== undefined) tail.textContent = msg;
+    },
+    done(msg) {
+      clearInterval(timer);
+      wrap.classList.remove("indeterminate");
+      wrap.classList.add("done");
+      fill.style.width = "100%";
+      if (msg !== undefined) tail.textContent = msg;
+      setTimeout(() => { host.innerHTML = ""; }, 1600);
+    },
+    fail(msg) {
+      clearInterval(timer);
+      wrap.classList.remove("indeterminate");
+      wrap.classList.add("failed");
+      tail.textContent = msg || "失败";
+    },
+  };
+}
+
+
+const LEVEL_BADGE = {
+  ready: ["ready", "就绪"],
+  limited: ["limited", "可用·受限"],
+  blocked: ["blocked", "不可用"],
 };
 
 function renderCards() {
@@ -33,12 +77,12 @@ function renderCards() {
     const card = el("div", { class: "card" });
     const h = el("h3");
     h.textContent = ime.label;
-    const [cls, text] = STATE_BADGE[ime.state] || ["off", ime.state || "?"];
-    h.appendChild(el("span", { class: "badge " + cls }, text));
+    const [lcls, ltext] = LEVEL_BADGE[ime.level] || ["off", ime.level || "?"];
+    h.appendChild(el("span", { class: "badge " + lcls }, ltext));
     if (ime.state === "ready") {
       const writable = (ime.caps || {}).writable !== false;
       h.appendChild(el("span", { class: "badge " + (writable ? "ready" : "na") },
-        writable ? "可读写" : "只读"));
+        writable ? "可读可写" : "只读"));
     }
     if (ime.installed) {
       h.appendChild(el("span", { class: "badge " + (ime.running ? "on" : "off") },
@@ -46,7 +90,7 @@ function renderCards() {
     }
     card.appendChild(h);
     card.appendChild(el("div", { class: "ver" },
-      "v" + (ime.version || "?") + (ime.caps && ime.caps.note ? " · " + ime.caps.note.slice(0, 46) : "")));
+      "v" + (ime.version || "?") + (ime.store ? " · " + ime.store : "")));
 
     const num = el("div", { class: "num" });
     if (ime.records === null || ime.records === undefined) {
@@ -56,7 +100,17 @@ function renderCards() {
       num.appendChild(el("small", {}, "条个人词"));
     }
     card.appendChild(num);
-    card.appendChild(el("div", { class: "meta" }, ime.detail || ""));
+    if (ime.detail) card.appendChild(el("div", { class: "meta" }, ime.detail));
+
+    const notes = ime.limits || [];
+    if (notes.length) {
+      const ul = el("ul", { class: "limits" });
+      notes.forEach((n) => {
+        const mark = n.level === "blocked" ? "✕ " : n.level === "limited" ? "! " : "· ";
+        ul.appendChild(el("li", { class: n.level }, mark + n.text));
+      });
+      card.appendChild(ul);
+    }
     box.appendChild(card);
   });
 }
@@ -76,13 +130,19 @@ function fillSelect(sel, items, valueKey, labelFn) {
   if (keep && items.some((i) => String(i[valueKey]) === keep)) node.value = keep;
 }
 
+function imeLabel(i) {
+  const mark = i.level === "limited" ? " ⚠" : "";
+  return i.label + mark;
+}
+
 function renderSelectors() {
-  const usable = state.imes.filter((i) => i.state === "ready");
-  fillSelect("#exportIme", usable, "ime", (i) => i.label);
-  fillSelect("#targetIme", usable, "ime", (i) => i.label);
-  fillSelect("#backupIme", state.imes.filter((i) => i.installed), "ime", (i) => i.label);
-  fillSelect("#migSource", usable, "ime", (i) => i.label);
-  fillSelect("#migTarget", usable, "ime", (i) => i.label);
+  // 受限的仍可选（比如豆包还能再写一千多条），不可用的不出现
+  const pick = state.imes.filter((i) => i.level !== "blocked");
+  fillSelect("#exportIme", pick, "ime", imeLabel);
+  fillSelect("#targetIme", pick, "ime", imeLabel);
+  fillSelect("#backupIme", state.imes.filter((i) => i.installed), "ime", imeLabel);
+  fillSelect("#migSource", pick, "ime", imeLabel);
+  fillSelect("#migTarget", pick, "ime", imeLabel);
   fillSelect("#fileList", state.exports, "file",
     (e) => `${e.file} · ${e.count} 条 · ${e.source || "?"}`);
 }
@@ -193,24 +253,32 @@ function renderDiff(data) {
   $("#btnApply").disabled = false;
 }
 
-async function refresh() {
+async function refresh(bootBar) {
   const data = await api("/api/status");
   state = data;
   renderCards();
   renderSelectors();
   renderBackups();
+  if (bootBar) bootBar.done(`${data.imes.length} 家已探测`);
 }
 
 $("#btnExport").onclick = async () => {
   const ime = $("#exportIme").value;
-  $("#exportMsg").textContent = "导出中…";
+  const label = state.imes.find((i) => i.ime === ime)?.label || ime;
+  // 导出是一次阻塞调用，后端给不出中间阶段 —— 只走不确定进度 + 秒数
+  const bar = makeBar($("#exportPreview"), `读取 ${label} 的词库`);
+  $("#exportMsg").textContent = "";
+  $("#btnExport").disabled = true;
   try {
     const data = await api("/api/export", { ime });
+    bar.done(`${data.count} 条 → ${data.file}`);
     renderExportPreview(data);
-    $("#exportMsg").textContent = "";
     await refresh();
   } catch (e) {
+    bar.fail(e.message);
     $("#exportMsg").textContent = "失败：" + e.message;
+  } finally {
+    $("#btnExport").disabled = false;
   }
 };
 
@@ -220,11 +288,15 @@ $("#btnDiff").onclick = async () => {
   if (!file) return;
   $("#btnApply").disabled = true;
   diffReady = false;
-  $("#diffSummary").textContent = "计算中…";
+  const label = state.imes.find((i) => i.ime === ime)?.label || ime;
+  const bar = makeBar($("#diffSummary"), `读取 ${label} 的词库并计算 diff`);
   try {
     const data = await api("/api/diff", { ime, file, strategy: $("#strategy").value });
+    const s = data.summary;
+    bar.done(`新增 ${s.add} · 累加 ${s.bump} · 同词异音 ${s.conflict}`);
     renderDiff(data);
   } catch (e) {
+    bar.fail(e.message);
     $("#diffSummary").innerHTML = '<span class="err">' + e.message + "</span>";
   }
 };
@@ -237,17 +309,21 @@ $("#btnApply").onclick = async () => {
   if (!confirm(`确认把 ${file} 合并进 ${label}？\n\n会先自动备份、退出输入法、写入后重启。`)) return;
   $("#btnApply").disabled = true;
   $("#btnApply").textContent = "写入中…";
+  // 写入有 6 个离散阶段，后端拿不到（一次 HTTP 调用），所以先走不确定进度，
+  // 结束时用返回的真实数字收尾。给的是"正在做事"而不是编造的百分比。
+  const bar = makeBar($("#diffSummary"), `备份 → 退出 → 写入 ${label} → 重启`);
   try {
     const data = await api("/api/apply", { ime, file, strategy: $("#strategy").value });
-    alert(`合并完成：写入 ${data.written} 条\n备份：${data.backup || "无"}`);
+    bar.done(`写入 ${data.written}/${data.requested || data.written} 条`);
     await refresh();
   } catch (e) {
+    bar.fail(e.message);
     alert("写入失败：" + e.message);
   } finally {
     $("#btnApply").textContent = "确认合并写入";
+    $("#btnApply").disabled = false;
   }
 };
-
 $("#btnBackup").onclick = async () => {
   const ime = $("#backupIme").value;
   $("#backupMsg").textContent = "备份中…";
@@ -260,7 +336,11 @@ $("#btnBackup").onclick = async () => {
   }
 };
 
-refresh().catch((e) => {
+// 首屏要等 /api/status 把三家词库都解析一遍（微键 20 万条键值，约 5-10 秒）。
+// 这期间必须有东西动，否则看着像卡死。
+const bootBar = makeBar($("#bootStatus"), "正在探测本机输入法");
+refresh(bootBar).catch((e) => {
+  bootBar.fail(e.message);
   document.body.insertAdjacentHTML("afterbegin",
     '<p class="err" style="padding:16px 32px">加载失败：' + e.message + "</p>");
 });
@@ -311,14 +391,18 @@ $("#btnMigratePreview").onclick = async () => {
   const target = $("#migTarget").value;
   if (!source || !target) return;
   if (source === target) { alert("源和目标不能是同一个输入法"); return; }
-  $("#migSummary").textContent = "计算中…";
+  const srcLabel = state.imes.find((i) => i.ime === source)?.label || source;
+  const bar = makeBar($("#migSummary"), `读取 ${srcLabel} 的词库并计算 diff`);
   $("#migTable").innerHTML = "";
   $("#btnMigrateApply").disabled = true;
   migReady = false;
   try {
     const data = await api("/api/migrate", { source, target, strategy: $("#migStrategy").value });
+    const s = data.summary || {};
+    bar.done(`新增 ${s.add || 0} · 累加 ${s.bump || 0} · 同词异音 ${s.conflict || 0}`);
     renderMigrate(data);
   } catch (e) {
+    bar.fail(e.message);
     $("#migSummary").innerHTML = '<span class="err">' + e.message + "</span>";
   }
 };
@@ -331,16 +415,19 @@ $("#btnMigrateApply").onclick = async () => {
   if (!confirm(`确认把 ${source} 的个人词迁移进 ${label}？\n\n会先自动备份、退出输入法、写入后重启。`)) return;
   $("#btnMigrateApply").disabled = true;
   $("#btnMigrateApply").textContent = "迁移中…";
+  const bar = makeBar($("#migSummary"), `导出 → 备份 → 退出 → 写入 ${label} → 重启`);
   try {
     const data = await api("/api/migrate", {
       source, target, strategy: $("#migStrategy").value, apply: true,
     });
-    alert(`迁移完成：写入 ${data.written} 条\n备份：${data.backup || "无"}`);
+    bar.done(`写入 ${data.written}/${data.requested || data.written} 条`);
     await refresh();
   } catch (e) {
+    bar.fail(e.message);
     alert("迁移失败：" + e.message);
   } finally {
     $("#btnMigrateApply").textContent = "确认迁移";
+    $("#btnMigrateApply").disabled = false;
   }
 };
 

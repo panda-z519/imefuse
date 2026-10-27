@@ -2,12 +2,12 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 import time
 
-from . import canonical, merge as merge_mod
-from . import discover, paths, util
+from . import actions, limits as limits_mod
+from . import discover, merge as merge_mod, paths, util
+from . import progress as progress_mod
 from .adapters import doubao, sogou, wetype
 
 __version__ = "0.1.0"
@@ -24,94 +24,75 @@ ADAPTERS = {
 }
 
 
-def target_has_count(ime):
-    return bool(getattr(ADAPTERS[ime], "CAPS", {}).get("has_count", True))
-
-
 def _ensure_dirs():
     for d in (EXPORT_DIR, STATE_DIR, RUNS_DIR):
         os.makedirs(d, exist_ok=True)
 
 
-def _ime_running(process_marker):
-    out = subprocess.run(["pgrep", "-f", process_marker], capture_output=True, text=True)
-    return bool(out.stdout.strip())
-
 
 def cmd_export(args):
     _ensure_dirs()
-    adapter = ADAPTERS[args.ime]
-    records, stats = adapter.export()
-    records = canonical.dedupe(records)
-    header = canonical.make_header(args.ime, count=len(records))
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    jsonl = os.path.join(EXPORT_DIR, "%s-%s.jsonl" % (args.ime, stamp))
-    tsv = os.path.join(EXPORT_DIR, "%s-%s.tsv" % (args.ime, stamp))
-    canonical.write_jsonl(jsonl, header, records)
-    canonical.write_tsv(tsv, records)
+    with progress_mod.make().step("读取 %s 的词库" % discover.BY_NAME[args.ime]["label"]) as st:
+        result = actions.export_ime(args.ime)
+        st.note("%d 条" % result["count"])
     print(json.dumps({
-        "ime": args.ime, "records": len(records), "stats": stats,
-        "jsonl": os.path.relpath(jsonl, ROOT), "tsv": os.path.relpath(tsv, ROOT),
-        "export_id": header["export_id"],
+        "ime": args.ime, "records": result["count"], "stats": result["stats"],
+        "jsonl": result["file"], "tsv": result["tsv"],
+        "export_id": result["export_id"],
     }, ensure_ascii=False, indent=2))
     return 0
 
 
-def _load_existing(ime):
-    records, _stats = ADAPTERS[ime].export()
-    return {canonical.merge_key(r): r for r in records}
-
-
 def cmd_import(args):
+    """与 GUI / 向导共用 actions：快照 → 退输入法 → 写 → 重启。"""
     _ensure_dirs()
-    adapter = ADAPTERS[args.ime]
-    header, incoming_list = canonical.read_jsonl(args.file)
-    incoming = {canonical.merge_key(r): r for r in incoming_list}
-    existing = _load_existing(args.ime)
-    plan, summary = merge_mod.plan_merge(existing, incoming, strategy=args.strategy,
-                                         alpha=args.alpha,
-                                         target_has_count=target_has_count(args.ime))
-    todo = [p for p in plan if p["action"] in ("add", "bump")]
-    report = {
-        "ime": args.ime, "strategy": args.strategy, "dry_run": not args.apply,
-        "summary": summary, "to_write": len(todo),
-        "sample": [{"w": p["key"][0], "py": p["key"][1], "action": p["action"],
-                    "old": p["old"], "new": p["new"], "merged": p["merged"]}
-                   for p in sorted(todo, key=lambda x: -x["merged"])[:10]],
-    }
+    try:
+        header, incoming_list = actions.load_file(args.file)
+    except (OSError, ValueError) as exc:
+        print(json.dumps({"error": "读不了这份文件：%s" % exc,
+                          "file": args.file,
+                          "hint": "文件要存在，且是 imefuse 导出的 .jsonl 或 .tsv"},
+                         ensure_ascii=False, indent=2))
+        return 2
+    report = {"ime": args.ime, "strategy": args.strategy,
+              "dry_run": not args.apply, "file": os.path.basename(args.file)}
+
     if not args.apply:
+        result = actions.diff_records(args.ime, incoming_list, args.strategy, args.alpha)
+        report["summary"] = result["summary"]
+        report["to_write"] = result["summary"]["add"] + result["summary"]["bump"]
+        report["sample"] = result["rows"][:10]
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
-    if not getattr(ADAPTERS[args.ime], "CAPS", {}).get("writable", True) and not args.force_unsafe:
-        print(json.dumps({
-            "error": "该输入法写回未通过引擎校验，默认拒绝写入",
-            "ime": args.ime,
-            "reason": getattr(ADAPTERS[args.ime], "CAPS", {}).get("note", ""),
-            "override": "--force-unsafe（有丢词风险，先做备份）",
-        }, ensure_ascii=False, indent=2))
+
+    try:
+        result = actions.apply_records(args.ime, incoming_list, header,
+                                       args.strategy, args.alpha, args.force_unsafe,
+                                       progress=progress_mod.make())
+    except RuntimeError as exc:
+        print(json.dumps({"error": str(exc), "ime": args.ime},
+                         ensure_ascii=False, indent=2))
         return 3
-    if not args.force and _ime_running(args.process_marker):
-        print(json.dumps({"error": "IME is running; quit it first or pass --force",
-                          "marker": args.process_marker}, ensure_ascii=False, indent=2))
-        return 2
-    now = int(time.time())
-    entries = [(p["key"][1], p["key"][0], p["merged"], p.get("ts") or now) for p in todo]
-    plan_w, seq = adapter.write_entries(entries, dry_run=False)
-    ok = sum(1 for p in plan_w if p.get("status") in ("ok", "add"))
-    report["written"] = ok
-    report["seq"] = seq
-    report["failed"] = [p.get("key") or p.get("w") for p in plan_w
-                        if p.get("status") not in ("ok", "add")]
+
+    report.update({"summary": result.get("summary"),
+                   "written": result.get("written", 0),
+                   "requested": result.get("requested", 0),
+                   "failed": result.get("failed", []),
+                   "seq": result.get("seq"), "backup": result.get("backup"),
+                   "note": result.get("note")})
     ledger = os.path.join(STATE_DIR, "imported.json")
-    hist = []
-    if os.path.exists(ledger):
-        hist = util.read_json(ledger)
+    hist = util.read_json(ledger) if os.path.exists(ledger) else []
     hist.append({"ime": args.ime, "export_id": (header or {}).get("export_id"),
-                 "file": os.path.basename(args.file), "at": now,
-                 "written": ok, "strategy": args.strategy})
+                 "file": os.path.basename(args.file), "at": int(time.time()),
+                 "written": report["written"], "strategy": args.strategy})
     util.write_json(ledger, hist, indent=2)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
+
+
+def cmd_wizard(args):
+    from . import wizard
+    return wizard.run()
 
 
 STATE_LABEL = {
@@ -122,33 +103,79 @@ STATE_LABEL = {
     "error": "读取失败",
 }
 
+LEVEL_LABEL = {
+    "ready": "就绪",
+    "limited": "可用·受限",
+    "blocked": "不可用",
+}
+LEVEL_MARK = {"ready": "· ", "limited": "! ", "blocked": "x "}
+
 
 def cmd_detect(args):
     rows = discover.probe_all()
     if args.json:
         print(json.dumps(rows, ensure_ascii=False, indent=2, default=str))
         return 0
-    print("%-8s %-12s %-9s %-7s %-8s %s" % ("输入法", "状态", "版本", "条目", "运行", "说明"))
-    print("-" * 92)
+    print("%-8s %-10s %-9s %-7s %-6s %s" % ("输入法", "能力", "版本", "条目", "运行", "说明"))
+    print("-" * 96)
     for r in rows:
-        print("%-8s %-12s %-9s %-7s %-8s %s" % (
-            r["ime"], STATE_LABEL.get(r["state"], r["state"]),
+        print("%-8s %-10s %-9s %-7s %-6s %s" % (
+            r["ime"], LEVEL_LABEL.get(r["level"], r["level"]),
             r["version"] or "-", r["records"] if r["records"] is not None else "-",
             "是" if r["running"] else "否", r["detail"]))
-    usable = [r["ime"] for r in rows if r["state"] == "ready"]
+    blocked = [r for r in rows if r["level"] == "blocked"]
+    usable = discover.usable(rows)
     print("\n可迁移: %s" % (", ".join(usable) if usable else "无"))
+    if blocked:
+        print("不可用: %s（原因见 imefuse doctor）"
+              % ", ".join(r["ime"] for r in blocked))
+
+    limits = limits_mod.flatten(rows)
+    if limits:
+        print()
+        for row in limits:
+            print("%s%-8s %s" % (LEVEL_MARK.get(row["level"], "  "),
+                                 row["ime"], row["text"]))
     return 0
 
 
+def cmd_doctor(args):
+    rows = discover.probe_all()
+    if args.json:
+        out = [{"ime": r["ime"], "level": r["level"], "state": r["state"],
+                "limits": r["limits"]} for r in rows]
+        print(json.dumps({"checks": out, "usable": discover.usable(rows)},
+                         ensure_ascii=False, indent=2, default=str))
+        return 0
+    print("imefuse %s · Python %s · %s"
+          % (__version__, sys.version.split()[0], paths.data_dir()))
+    print()
+    for r in rows:
+        print("%-8s %-10s %s" % (r["ime"], LEVEL_LABEL.get(r["level"], r["level"]),
+                                 r["label"]))
+        if not r["limits"]:
+            print("         · 无已知限制")
+        for item in r["limits"]:
+            print("         %s%s" % (LEVEL_MARK.get(item["level"], "  "), item["text"]))
+            if item["detail"] and args.verbose and item["detail"] != item["text"]:
+                print("           %s" % item["detail"])
+        print()
+    usable = discover.usable(rows)
+    print("可迁移: %s" % (", ".join(usable) if usable else "无"))
+    return 0 if usable else 1
+
+
 def cmd_status(args):
+    rows = discover.probe_all()
     out = {}
-    for row in discover.probe_all():
+    for row in rows:
         name = row["ime"]
         out[name] = {k: row.get(k) for k in
-                     ("installed", "version", "running", "records", "state", "detail", "caps")}
+                     ("installed", "version", "running", "records", "state",
+                      "detail", "caps", "level", "limits")}
         if row.get("stats"):
             out[name]["stats"] = row["stats"]
-    out["usable"] = discover.usable()
+    out["usable"] = discover.usable(rows)
     print(json.dumps(out, ensure_ascii=False, indent=2, default=str))
     return 0
 
@@ -159,9 +186,12 @@ def cmd_gui(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="imefuse")
+    parser = argparse.ArgumentParser(
+        prog="imefuse",
+        description="不带子命令直接进交互向导；也可以走子命令做单步操作。")
     parser.add_argument("--version", action="version", version="imefuse " + __version__)
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    # 不 required：无参数时落到向导，而不是打印一大段 usage
+    sub = parser.add_subparsers(dest="cmd")
 
     p = sub.add_parser("export", help="export one IME to canonical jsonl/tsv")
     p.add_argument("ime", choices=sorted(ADAPTERS))
@@ -173,15 +203,21 @@ def main(argv=None):
     p.add_argument("--strategy", default="P1", choices=sorted(merge_mod.STRATEGIES))
     p.add_argument("--alpha", type=float, default=0.5)
     p.add_argument("--apply", action="store_true", help="actually write (default: dry run)")
-    p.add_argument("--force", action="store_true")
     p.add_argument("--force-unsafe", action="store_true",
                    help="allow writing into an IME whose write path failed verification")
-    p.add_argument("--process-marker", default="WeType.app/Contents/MacOS/WeType")
     p.set_defaults(func=cmd_import)
 
     p = sub.add_parser("detect", help="detect which IMEs exist on this Mac")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_detect)
+
+    p = sub.add_parser("wizard", help="交互向导：一条命令，选项式操作")
+    p.set_defaults(func=cmd_wizard)
+
+    p = sub.add_parser("doctor", help="每家的能力分级与已知限制")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("status")
     p.set_defaults(func=cmd_status)
@@ -191,7 +227,11 @@ def main(argv=None):
     p.set_defaults(func=cmd_gui)
 
     args = parser.parse_args(argv)
-    return args.func(args)
+    handler = getattr(args, "func", None)
+    if handler is None:
+        # 没有子命令 = 想要向导
+        return cmd_wizard(args)
+    return handler(args)
 
 
 if __name__ == "__main__":
