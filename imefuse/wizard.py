@@ -363,8 +363,12 @@ def run(refresh=True):
 
 
 def _loop(con, state):
+    first = True
     while True:
-        con.line()
+        # 首轮上方已经有欢迎语，不再额外空一行
+        if not first:
+            con.line()
+        first = False
         options = [(key, label, hint, None) for key, label, hint, _fn in MENU]
         picked = con.choose("要做什么？（q 退出）", options, allow_back=False)
         handler = dict((key, fn) for key, _l, _h, fn in MENU)[picked]

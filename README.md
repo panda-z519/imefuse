@@ -49,11 +49,14 @@ Move the personal word-frequency data out of WeType / Sogou / Doubao on macOS an
 | | 微信键盘 | 搜狗 | 豆包 |
 |---|---|---|---|
 | 读取私有词库 | ✅ | ✅ | ✅ |
-| 合并写回 | ✅ | ✅ | ✅ |
-| 有真实词频计数 | ✅ | ✗（只有保存代次） | ✅ |
+| 写入新词条 | ✅ | ✅ | ✅ |
+| 抬高已有词的词频 | ✅ | ✗（只有保存代次） | ✗（写回是仅加词） |
 | 行为级验证 | ✅ | ✅ | ✅ |
 
-「行为级验证」指的是：写进词库 → 重启输入法 → 真的打拼音上屏那个词，而不是「字节写到磁盘上了」。完整验证矩阵和原始证据在 [docs/verification.md](docs/verification.md)。
+「行为级验证」指的是：写进词库 → 重启输入法 → 真的打拼音上屏那个词，而不是
+「字节写到磁盘上了」。完整验证矩阵和原始证据在 [docs/verification.md](docs/verification.md)。
+
+各家还有各自的上限，`./imefuse.sh doctor` 会逐条列出来，见下方[能力限制](#能力限制)。
 
 ## 设计原则
 
@@ -61,7 +64,8 @@ Move the personal word-frequency data out of WeType / Sogou / Doubao on macOS an
 
 **宁可拒绝，也不写坏。** 每个适配器都带格式指纹。输入法一升级、字节对不上，imefuse 就报「格式不识别」然后收手，而不是往你的词库里塞垃圾。
 
-**假设输入法正在运行。** 每次写入都先退出输入法、整目录快照、写入、重启、回读校验，任何一步失败自动回滚。
+**失败就停，不会继续往下写。** 每次写入都先整目录快照、退出输入法、写入、重启；
+任何一步抛错都会把输入法重新拉起来，快照留在 `backups/` 里供你手动回滚。
 
 **数据属于你。** 不联网、不上报、不上传。词库不会离开这台机器，除非你自己把文件带走。
 
@@ -70,7 +74,7 @@ Move the personal word-frequency data out of WeType / Sogou / Doubao on macOS an
 只依赖系统自带的 `bash` 与 `python3`（3.9+），没有 pip 依赖，也不编译任何东西。
 
 ```bash
-git clone https://github.com/<you>/imefuse.git
+git clone https://github.com/panda-z519/imefuse.git
 cd imefuse
 
 ./imefuse.sh doctor        # 先看这台机器能不能用、每家的硬限制
@@ -95,7 +99,7 @@ cd imefuse
 它会把三家的状态摊开，告诉你**能不能用、为什么不能、用了有什么代价**：
 
 ```
-imefuse 0.1.0 · Python 3.9.6 · /Users/you/imefuse
+imefuse 0.1.0 · Python 3.9+ · /path/to/imefuse
 
 wetype   就绪         微信键盘 WeType
          · 无已知限制
@@ -128,7 +132,7 @@ doubao   可用·受限      豆包输入法
 ```
 
 ```
-── imefuse ───────────────────────────────────────
+── imefuse ────────────────────────────────────────────────────────
   词库在本机，不联网、不上传。写入前会先备份并退出输入法。
 
   要做什么？（q 退出）
@@ -140,6 +144,7 @@ doubao   可用·受限      豆包输入法
      6) 回滚（把某家恢复到某个备份）
      7) 限制说明（逐条列出每家的能力档与原因）
    q) 退出
+  选择编号 [1]:
 ```
 
 选完动作接着问对象。**每一步都能 `q` 退出，写入前一定先给你看 diff**：
@@ -284,17 +289,16 @@ doubao   可用·受限      豆包输入法
 | 搜狗 | 词库里没有计数器，`gen` 是保存代次 | 只能加词条，无法迁移词频 |
 | 微信键盘 | 词库目录带版本号（`userDict/v5`） | 厂商换版本后报「格式不识别」，而不是静默乱读 |
 
-## 构建与开发
+## 开发
 
 | 命令 | 作用 |
 |---|---|
-| `make doctor` | 能力分级 + 已知限制（建议先跑） |
 | `make test` | 98 个单元测试，不需要真机数据 |
 | `make lint` | byte-compile + `ruff`（装了才跑） |
-| `make run` | 启动本地界面 |
+| `make doctor` / `detect` / `run` | 同 `./imefuse.sh` 的对应子命令 |
 
-交付物就是仓库本身加一个 `imefuse.sh`：没有 `.app`、没有编译步骤、没有公证。
-拷到任何一台装了 `python3`（3.9+）的 Mac 上都能直接跑。
+仓库就是交付物：一个 `imefuse.sh` 加纯标准库的 Python，没有编译步骤，
+也没有打包产物。
 
 ## 致谢
 
@@ -352,11 +356,16 @@ If the vendors eventually ship a real import/export, this project becomes obsole
 | | WeType 微信键盘 | Sogou 搜狗 | Doubao 豆包 |
 |---|---|---|---|
 | Read the private dictionary | ✅ | ✅ | ✅ |
-| Merge a dictionary back in | ✅ | ✅ | ✅ |
-| Keeps a real hit count | ✅ | ✗ (save generation only) | ✅ |
+| Add new entries | ✅ | ✅ | ✅ |
+| Raise an existing word's frequency | ✅ | ✗ (save generation only) | ✗ (write-back is add-only) |
 | Verified end to end | ✅ | ✅ | ✅ |
 
-"Verified" means: the word was written into the store, the IME was restarted, and typing its pinyin actually committed that word — not merely "the bytes are on disk". The full matrix and the raw evidence live in [docs/verification.md](docs/verification.md).
+"Verified" means: the word was written into the store, the IME was restarted, and typing
+its pinyin actually committed that word — not merely "the bytes are on disk". The full
+matrix and the raw evidence live in [docs/verification.md](docs/verification.md).
+
+Each IME has its own ceiling; `./imefuse.sh doctor` lists them, see
+[Known limits](#known-limits) below.
 
 ## Design principles
 
@@ -364,7 +373,9 @@ If the vendors eventually ship a real import/export, this project becomes obsole
 
 **Refuse rather than corrupt.** Every adapter carries a format fingerprint. If an IME update changes the bytes, imefuse says *unknown format* and stays out of the way instead of writing garbage into your dictionary.
 
-**Assume the application is running.** Every write stops the IME first, snapshots the whole data directory, writes, restarts, re-reads to confirm, and rolls back automatically on any failure.
+**Stop on failure, never keep writing.** Every write snapshots the whole data directory,
+quits the IME, writes, then restarts it; any error along the way still brings the IME
+back up, and the snapshot stays in `backups/` for you to roll back by hand.
 
 **Own your data.** No network, no telemetry, no upload. The dictionary never leaves the machine unless you carry the file out yourself.
 
@@ -373,7 +384,7 @@ If the vendors eventually ship a real import/export, this project becomes obsole
 Only needs the `bash` and `python3` (3.9+) that ship with macOS. No pip dependencies, nothing to compile.
 
 ```bash
-git clone https://github.com/<you>/imefuse.git
+git clone https://github.com/panda-z519/imefuse.git
 cd imefuse
 
 ./imefuse.sh doctor        # can this machine do it, and what are the hard limits
@@ -398,7 +409,7 @@ cd imefuse
 It lays out all three IMEs and tells you **whether it works, why not, and what it costs**:
 
 ```
-imefuse 0.1.0 · Python 3.9.6 · /Users/you/imefuse
+imefuse 0.1.0 · Python 3.9+ · /path/to/imefuse
 
 wetype   ready          WeType 微信键盘
          · no known limits
@@ -430,7 +441,7 @@ Three levels:
 ```
 
 ```
-── imefuse ───────────────────────────────────────
+── imefuse ────────────────────────────────────────────────────────
   Your dictionary stays on this machine. Every write is backed up first,
   and the IME is quit before the file is touched.
 
